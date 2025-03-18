@@ -22,3 +22,9 @@ Thumbs.db
 # Additional exclusions
 .env
 temp_audio_segments/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
