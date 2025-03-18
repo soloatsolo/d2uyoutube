@@ -16,125 +16,164 @@ import io
 import threading
 from langdetect import detect
 import time
+import json
 
 class DubbingApp:
     def __init__(self, master):
         self.master = master
         self.master.title("YouTube Video Dubber")
-        self.master.geometry("800x600")
+        self.master.geometry("1000x800")
+        self.master.configure(bg="#f0f0f0")
         
         # Variables
         self.video_url = tk.StringVar()
         self.output_path = tk.StringVar()
-        self.target_language = tk.StringVar(value="ar")  # Default to Arabic
-        self.source_language = tk.StringVar()  # Will be detected automatically
+        self.target_language = tk.StringVar(value="ar")
+        self.source_language = tk.StringVar()
         self.progress_var = tk.DoubleVar()
         self.status_var = tk.StringVar()
         self.is_paused = False
         self.current_thread = None
         self.is_processing = False
         
+        # Configure styles
+        self.setup_styles()
+        
+        # Create main container
+        self.main_container = ttk.Frame(self.master, padding="10")
+        self.main_container.pack(fill=tk.BOTH, expand=True)
+        
         self._create_widgets()
         
-    def _create_widgets(self):
-        # Main container to hold all frames
-        main_container = ttk.Frame(self.master)
-        main_container.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # URL Input
-        url_frame = ttk.LabelFrame(main_container, text="Video URL", padding="5")
-        url_frame.pack(fill="x", padx=5, pady=5)
-        
-        ttk.Entry(url_frame, textvariable=self.video_url).pack(fill="x", expand=True, side="left", padx=5)
-        ttk.Button(url_frame, text="Load Info", command=self.start_load_info).pack(side="right", padx=5)
-
-        # Output Path
-        path_frame = ttk.LabelFrame(main_container, text="Output Location", padding="5")
-        path_frame.pack(fill="x", padx=5, pady=5)
-        
-        ttk.Entry(path_frame, textvariable=self.output_path).pack(fill="x", expand=True, side="left", padx=5)
-        ttk.Button(path_frame, text="Browse", command=self.browse_output).pack(side="right", padx=5)
-
-        # Language Selection
-        lang_frame = ttk.LabelFrame(main_container, text="Languages", padding="5")
-        lang_frame.pack(fill="x", padx=5, pady=5)
-        
-        ttk.Label(lang_frame, text="From:").pack(side="left", padx=5)
-        self.source_lang_label = ttk.Label(lang_frame, text="(Auto-detect)")
-        self.source_lang_label.pack(side="left", padx=5)
-        ttk.Label(lang_frame, text="To:").pack(side="left", padx=5)
-        ttk.Entry(lang_frame, textvariable=self.target_language, width=5).pack(side="left", padx=5)
-
-        # Video Info Display
-        self.info_frame = ttk.LabelFrame(main_container, text="Video Information", padding="5")
-        self.info_frame.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # Add scrollbar to info text
-        info_text_frame = ttk.Frame(self.info_frame)
-        info_text_frame.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        info_scrollbar = ttk.Scrollbar(info_text_frame)
-        info_scrollbar.pack(side="right", fill="y")
-        
-        self.info_text = tk.Text(info_text_frame, height=5, wrap="word", yscrollcommand=info_scrollbar.set)
-        self.info_text.pack(fill="both", expand=True)
-        info_scrollbar.config(command=self.info_text.yview)
-        
-        self.thumbnail_label = ttk.Label(self.info_frame)
-        self.thumbnail_label.pack(padx=5, pady=5)
-
-        # Progress and Status Frame
-        progress_frame = ttk.Frame(main_container)
-        progress_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Progress bar with percentage label
-        progress_bar_frame = ttk.Frame(progress_frame)
-        progress_bar_frame.pack(fill="x")
-        
-        self.progress_bar = ttk.Progressbar(
-            progress_bar_frame, 
-            variable=self.progress_var,
-            maximum=100,
-            length=300
-        )
-        self.progress_bar.pack(side="left", fill="x", expand=True, padx=(5, 2))
-        
-        self.progress_label = ttk.Label(progress_bar_frame, text="0%")
-        self.progress_label.pack(side="left", padx=(2, 5))
-        
-        # Status label
-        self.status_label = ttk.Label(
-            progress_frame, 
-            textvariable=self.status_var,
-            wraplength=780  # Allow text to wrap
-        )
-        self.status_label.pack(fill="x", padx=5, pady=2)
-
-        # Control Buttons Frame
-        control_frame = ttk.Frame(main_container)
-        control_frame.pack(pady=10)
-        
-        # Start Button
-        self.start_button = ttk.Button(
-            control_frame,
-            text="Start Dubbing",
-            command=self.start_dubbing,
-            style='Action.TButton'
-        )
-        self.start_button.pack(side="left", padx=5)
-
-        # Pause Button
-        self.pause_button = ttk.Button(
-            control_frame,
-            text="Pause",
-            command=self.toggle_pause,
-            state="disabled"
-        )
-        self.pause_button.pack(side="left", padx=5)
-        
-        # Configure style for buttons
+    def setup_styles(self):
         style = ttk.Style()
-        style.configure('Action.TButton', font=('Arial', 10, 'bold'))
+        style.configure("Header.TLabel", font=("Arial", 16, "bold"))
+        style.configure("Info.TLabel", font=("Arial", 10))
+        style.configure("URL.TEntry", font=("Arial", 12))
+        style.configure("Action.TButton", 
+                       font=("Arial", 11, "bold"),
+                       padding=5)
+        style.configure("Status.TLabel", 
+                       font=("Arial", 10),
+                       foreground="#555555")
+    
+    def _create_widgets(self):
+        # URL Section
+        url_frame = ttk.LabelFrame(self.main_container, text="Video URL", padding="10")
+        url_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        url_entry = ttk.Entry(url_frame, textvariable=self.video_url, style="URL.TEntry")
+        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        load_btn = ttk.Button(url_frame, text="Load Video Info",
+                             command=self.start_load_info,
+                             style="Action.TButton")
+        load_btn.pack(side=tk.RIGHT)
+        
+        # Video Info Display
+        self.info_frame = ttk.LabelFrame(self.main_container, text="Video Information", padding="10")
+        self.info_frame.pack(fill=tk.BOTH, padx=5, pady=5, expand=True)
+        
+        # Create two columns for thumbnail and info
+        info_columns = ttk.Frame(self.info_frame)
+        info_columns.pack(fill=tk.BOTH, expand=True)
+        
+        # Thumbnail column
+        thumb_frame = ttk.Frame(info_columns)
+        thumb_frame.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.thumbnail_label = ttk.Label(thumb_frame)
+        self.thumbnail_label.pack()
+        
+        # Info column
+        text_frame = ttk.Frame(info_columns)
+        text_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.title_label = ttk.Label(text_frame, style="Header.TLabel", wraplength=500)
+        self.title_label.pack(fill=tk.X, pady=(0, 5))
+        
+        self.channel_label = ttk.Label(text_frame, style="Info.TLabel")
+        self.channel_label.pack(fill=tk.X)
+        
+        self.desc_text = tk.Text(text_frame, height=4, wrap=tk.WORD)
+        self.desc_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Subtitle Options Frame
+        sub_frame = ttk.LabelFrame(self.main_container, text="Subtitle Options", padding="10")
+        sub_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Add subtitle file button
+        self.sub_file_btn = ttk.Button(sub_frame, text="Load Subtitle File",
+                                      command=self.browse_subtitle,
+                                      style="Action.TButton")
+        self.sub_file_btn.pack(pady=5)
+        
+        # Manual subtitle entry
+        ttk.Label(sub_frame, text="Or enter subtitles manually:").pack(pady=(5, 0))
+        self.sub_text = tk.Text(sub_frame, height=4, wrap=tk.WORD)
+        self.sub_text.pack(fill=tk.X, pady=5)
+        
+        # Language Options
+        lang_frame = ttk.LabelFrame(self.main_container, text="Languages", padding="10")
+        lang_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Source language (auto-detected)
+        ttk.Label(lang_frame, text="Source Language:").pack(side=tk.LEFT, padx=5)
+        self.source_lang_label = ttk.Label(lang_frame, text="(Auto-detect)")
+        self.source_lang_label.pack(side=tk.LEFT, padx=5)
+        
+        # Target language
+        ttk.Label(lang_frame, text="Target Language:").pack(side=tk.LEFT, padx=5)
+        target_langs = [("Arabic", "ar"), ("English", "en"), ("French", "fr"), 
+                       ("German", "de"), ("Spanish", "es")]
+        self.target_lang_combo = ttk.Combobox(lang_frame, textvariable=self.target_language,
+                                             values=[code for _, code in target_langs],
+                                             state="readonly", width=10)
+        self.target_lang_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Output Path
+        out_frame = ttk.LabelFrame(self.main_container, text="Output Location", padding="10")
+        out_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.out_entry = ttk.Entry(out_frame, textvariable=self.output_path)
+        self.out_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        browse_btn = ttk.Button(out_frame, text="Browse",
+                               command=self.browse_output,
+                               style="Action.TButton")
+        browse_btn.pack(side=tk.RIGHT)
+        
+        # Progress Section
+        progress_frame = ttk.Frame(self.main_container)
+        progress_frame.pack(fill=tk.X, padx=5, pady=10)
+        
+        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate",
+                                          variable=self.progress_var)
+        self.progress_bar.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        
+        self.progress_label = ttk.Label(progress_frame, text="0%")
+        self.progress_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Control Buttons
+        btn_frame = ttk.Frame(self.main_container)
+        btn_frame.pack(pady=10)
+        
+        self.start_button = ttk.Button(btn_frame, text="Start Dubbing",
+                                     command=self.start_dubbing,
+                                     style="Action.TButton")
+        self.start_button.pack(side=tk.LEFT, padx=5)
+        
+        self.pause_button = ttk.Button(btn_frame, text="Pause",
+                                     command=self.toggle_pause,
+                                     state="disabled",
+                                     style="Action.TButton")
+        self.pause_button.pack(side=tk.LEFT, padx=5)
+        
+        # Status Label
+        self.status_label = ttk.Label(self.main_container, 
+                                    textvariable=self.status_var,
+                                    style="Status.TLabel")
+        self.status_label.pack(pady=5)
 
     def start_load_info(self):
         """Start loading video info in a separate thread"""
@@ -192,10 +231,10 @@ class DubbingApp:
 
     def update_video_info(self, info):
         """Update video information in the UI (called from main thread)"""
-        self.info_text.delete(1.0, tk.END)
-        self.info_text.insert(tk.END, f"Title: {info.get('title', 'N/A')}\n")
-        self.info_text.insert(tk.END, f"Channel: {info.get('channel', 'N/A')}\n")
-        self.info_text.insert(tk.END, f"Duration: {info.get('duration_string', 'N/A')}\n")
+        self.title_label.config(text=info.get('title', 'N/A'))
+        self.channel_label.config(text=f"Channel: {info.get('channel', 'N/A')}")
+        self.desc_text.delete(1.0, tk.END)
+        self.desc_text.insert(tk.END, info.get('description', 'N/A'))
         
         # Try to detect language from title and description
         text_for_detection = f"{info.get('title', '')} {info.get('description', '')}"
@@ -242,6 +281,14 @@ class DubbingApp:
         if directory:
             self.output_path.set(directory)
 
+    def browse_subtitle(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Subtitle files", "*.srt")])
+        if file_path:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                subtitle_content = f.read()
+            self.sub_text.delete(1.0, tk.END)
+            self.sub_text.insert(tk.END, subtitle_content)
+
     def download_video_with_info(self, url, output_path, subtitle_lang=None):
         ydl_opts = {
             'outtmpl': os.path.join(output_path, '%(title)s-%(id)s.%(ext)s'),
@@ -273,7 +320,41 @@ class DubbingApp:
         except Exception as e:
             raise Exception(f"Error downloading video: {str(e)}")
 
+    def parse_subtitle_text(self, subtitle_text):
+        """Parse subtitle text to create SRT-like structure"""
+        try:
+            # Split text into lines
+            lines = subtitle_text.strip().split('\n')
+            subtitles = []
+            current_time = 0
+            
+            for i, line in enumerate(lines, 1):
+                if line.strip():  # Skip empty lines
+                    # Create artificial timing (3 seconds per line)
+                    start_time = timedelta(seconds=current_time)
+                    end_time = timedelta(seconds=current_time + 3)
+                    subtitles.append((start_time, end_time, line.strip()))
+                    current_time += 3
+            
+            return subtitles
+        except Exception as e:
+            raise Exception(f"Error parsing manual subtitles: {str(e)}")
+
+    def get_subtitles(self):
+        """Get subtitles from either manual input or file"""
+        # Check manual input first
+        manual_subs = self.sub_text.get("1.0", tk.END).strip()
+        if manual_subs:
+            return self.parse_subtitle_text(manual_subs)
+            
+        # If no manual input, try to get from downloaded subtitles
+        if hasattr(self, 'current_subtitle_path') and self.current_subtitle_path:
+            return self.parse_subtitle_file(self.current_subtitle_path)
+            
+        raise Exception("No subtitles available. Please either enter subtitles manually or ensure the video has subtitles.")
+
     def parse_subtitle_file(self, subtitle_path):
+        """Parse SRT file into list of (start, end, text) tuples"""
         try:
             with open(subtitle_path, 'r', encoding='utf-8') as f:
                 subtitle_content = f.read()
@@ -281,7 +362,7 @@ class DubbingApp:
             parsed = list(srt.parse(subtitle_content))
             return [(sub.start, sub.end, sub.content) for sub in parsed]
         except Exception as e:
-            raise Exception(f"Error parsing subtitles: {str(e)}")
+            raise Exception(f"Error parsing subtitle file: {str(e)}")
 
     def synchronize_audio(self, original_audio_path, dubbed_segments, subtitle_info):
         """
@@ -354,16 +435,23 @@ class DubbingApp:
             target_lang = self.target_language.get().strip()
             source_lang = self.source_language.get().strip()
             
-            self.update_status("جاري تنزيل الفيديو والصوت والترجمة...")
+            self.update_status("جاري تنزيل الفيديو...")
             download_result = self.download_video_with_info(url, output_dir, source_lang)
-            
-            if not download_result['subtitle_path']:
-                self.handle_error("لم يتم العثور على ملف ترجمة")
-                return
+            self.current_subtitle_path = download_result['subtitle_path']
             
             self.update_progress(30)
-            self.update_status("جاري تحليل ملف الترجمة...")
-            subtitle_info = self.parse_subtitle_file(download_result['subtitle_path'])
+            self.update_status("جاري تحليل الترجمة...")
+            
+            try:
+                # Try to get subtitles (either manual or from file)
+                subtitle_info = self.get_subtitles()
+            except Exception as e:
+                self.handle_error(f"Error with subtitles: {str(e)}")
+                return
+            
+            if not subtitle_info:
+                self.handle_error("لم يتم العثور على ترجمة")
+                return
             
             self.update_progress(40)
             self.update_status("جاري ترجمة النصوص...")
