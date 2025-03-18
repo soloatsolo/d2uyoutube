@@ -18,3 +18,7 @@ final_audio.wav
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Additional exclusions
+.env
+temp_audio_segments/

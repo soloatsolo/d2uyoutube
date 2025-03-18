@@ -6,7 +6,6 @@ from deep_translator import GoogleTranslator
 import arabic_reshaper
 from bidi.algorithm import get_display
 from gtts import gTTS
-import wave
 import subprocess
 import srt
 from datetime import timedelta
@@ -17,6 +16,9 @@ import threading
 from langdetect import detect
 import time
 import json
+import numpy as np
+import soundfile as sf
+import shutil
 
 class DubbingApp:
     def __init__(self, master):
@@ -35,6 +37,9 @@ class DubbingApp:
         self.is_paused = False
         self.current_thread = None
         self.is_processing = False
+        self.use_voice_clone = tk.BooleanVar(value=False)
+        self.speaker_wav_path = tk.StringVar()
+        self.tts_model = None
         
         # Configure styles
         self.setup_styles()
@@ -45,6 +50,9 @@ class DubbingApp:
         
         self._create_widgets()
         
+        # Bind cleanup to window close
+        self.master.protocol("WM_DELETE_WINDOW", self.cleanup)
+
     def setup_styles(self):
         style = ttk.Style()
         style.configure("Header.TLabel", font=("Arial", 16, "bold"))
@@ -174,6 +182,23 @@ class DubbingApp:
                                     textvariable=self.status_var,
                                     style="Status.TLabel")
         self.status_label.pack(pady=5)
+
+        # Voice Cloning Options
+        voice_frame = ttk.LabelFrame(self.main_container, text="Voice Cloning Options", padding="10")
+        voice_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.use_clone_check = ttk.Checkbutton(voice_frame, text="Use Voice Cloning",
+                                              variable=self.use_voice_clone,
+                                              command=self.toggle_voice_clone)
+        self.use_clone_check.pack(side=tk.LEFT, padx=5)
+
+        self.speaker_btn = ttk.Button(voice_frame, text="Select Speaker Voice",
+                                    command=self.browse_speaker_voice,
+                                    state="disabled")
+        self.speaker_btn.pack(side=tk.LEFT, padx=5)
+
+        self.speaker_label = ttk.Label(voice_frame, text="No file selected")
+        self.speaker_label.pack(side=tk.LEFT, padx=5)
 
     def start_load_info(self):
         """Start loading video info in a separate thread"""
@@ -429,21 +454,21 @@ class DubbingApp:
             self.handle_error(str(e))
 
     def dubbing_process(self):
+        """The main dubbing process."""
         try:
-            url = self.video_url.get().strip()
+            video_url = self.video_url.get().strip()
             output_dir = self.output_path.get().strip()
             target_lang = self.target_language.get().strip()
             source_lang = self.source_language.get().strip()
             
             self.update_status("جاري تنزيل الفيديو...")
-            download_result = self.download_video_with_info(url, output_dir, source_lang)
+            download_result = self.download_video_with_info(video_url, output_dir, source_lang)
             self.current_subtitle_path = download_result['subtitle_path']
             
             self.update_progress(30)
             self.update_status("جاري تحليل الترجمة...")
             
             try:
-                # Try to get subtitles (either manual or from file)
                 subtitle_info = self.get_subtitles()
             except Exception as e:
                 self.handle_error(f"Error with subtitles: {str(e)}")
@@ -461,80 +486,101 @@ class DubbingApp:
             self.update_progress(50)
             self.update_status("جاري تحويل النص إلى كلام...")
             
-            dubbed_segments = []
+            # Create temp directory for segments
+            temp_dir = "temp_audio_segments"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            wav_files = []
             total_segments = len(translated_texts)
             
             for i, text in enumerate(translated_texts, 1):
-                # Generate speech for each translated segment using gTTS
-                temp_wav = f"temp_speech_{i}.mp3"
-                tts = gTTS(text=text, lang=target_lang, slow=False)
-                tts.save(temp_wav)
-                
-                # Convert MP3 to WAV using ffmpeg
-                output_wav = f"temp_speech_{i}.wav"
-                subprocess.run([
-                    'ffmpeg', '-y', '-i', temp_wav,
-                    '-acodec', 'pcm_s16le',
-                    '-ar', '44100',
-                    output_wav
-                ], check=True)
-                
-                # Read the WAV file
-                with wave.open(output_wav, 'rb') as wf:
-                    frames = wf.readframes(wf.getnframes())
-                    dubbed_segments.append({
-                        'audio': frames,
-                        'params': wf.getparams()
-                    })
-                
-                # Clean up temporary files
-                os.remove(temp_wav)
-                os.remove(output_wav)
-                
-                self.update_progress(50 + (20 * i / total_segments))
-                
                 while self.is_paused:
-                    time.sleep(0.1)  # Small delay to prevent CPU hogging
+                    time.sleep(0.1)
                     continue
-            
+
+                try:
+                    self.update_status(f"Converting text to speech ({i}/{total_segments})...")
+                    temp_mp3 = os.path.join(temp_dir, f"segment_{i}.mp3")
+                    temp_wav = os.path.join(temp_dir, f"segment_{i}.wav")
+                    
+                    # Generate speech using gTTS
+                    tts = gTTS(text=text, lang=target_lang, slow=False)
+                    tts.save(temp_mp3)
+                    
+                    # Convert MP3 to WAV using ffmpeg
+                    subprocess.run([
+                        'ffmpeg', '-y', '-i', temp_mp3,
+                        '-acodec', 'pcm_s16le',
+                        '-ar', '44100',
+                        temp_wav
+                    ], check=True)
+                    
+                    wav_files.append(temp_wav)
+                    os.remove(temp_mp3)  # Clean up MP3 file
+                    
+                    self.update_progress(50 + (20 * i / total_segments))
+
+                except Exception as e:
+                    self.handle_error(f"Error in speech generation: {str(e)}")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return
+
             self.update_progress(70)
             self.update_status("جاري مزامنة الصوت...")
-            final_audio_path = self.synchronize_audio(
-                download_result['video_path'],
-                dubbed_segments,
-                subtitle_info
-            )
-            
-            self.update_progress(80)
-            self.update_status("جاري إنشاء الفيديو النهائي...")
-            
-            # Merge video with dubbed audio using ffmpeg directly
-            output_video = os.path.join(output_dir, "dubbed_video.mp4")
-            subprocess.run([
-                'ffmpeg', '-y',
-                '-i', download_result['video_path'],
-                '-i', final_audio_path,
-                '-c:v', 'copy',
-                '-c:a', 'aac',
-                output_video
-            ], check=True)
-            
-            # Clean up
-            os.remove(final_audio_path)
-            
-            self.update_progress(100)
-            self.update_status("!تمت عملية الدبلجة بنجاح")
-            messagebox.showinfo("نجاح", "!تمت عملية الدبلجة بنجاح")
-            
-            self.pause_button.configure(state="disabled")
-            self.start_button.configure(state="normal")
-            
+
+            try:
+                final_audio_path = "temp_final_audio.wav"
+                
+                # Read the first file to get parameters
+                data, samplerate = sf.read(wav_files[0])
+                combined_data = data
+                
+                # Concatenate the rest of the files
+                for wav_file in wav_files[1:]:
+                    data, _ = sf.read(wav_file)
+                    combined_data = np.concatenate([combined_data, data])
+                
+                # Write the combined audio
+                sf.write(final_audio_path, combined_data, samplerate)
+
+                self.update_progress(80)
+                self.update_status("جاري إنشاء الفيديو النهائي...")
+
+                # Merge video with dubbed audio
+                output_video = os.path.join(output_dir, "dubbed_video.mp4")
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-i', download_result['video_path'],
+                    '-i', final_audio_path,
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    output_video
+                ], check=True)
+
+                # Clean up
+                os.remove(final_audio_path)
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+                self.update_progress(100)
+                self.update_status("!تمت عملية الدبلجة بنجاح")
+                messagebox.showinfo("نجاح", "!تمت عملية الدبلجة بنجاح")
+
+            except Exception as e:
+                self.handle_error(f"Error in audio processing: {str(e)}")
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                if os.path.exists(final_audio_path):
+                    os.remove(final_audio_path)
+
         except Exception as e:
             self.handle_error(str(e))
+        finally:
             self.pause_button.configure(state="disabled")
             self.start_button.configure(state="normal")
+            self.current_thread = None
 
     def update_status(self, message):
+        """Update the status message in the UI."""
         if isinstance(message, str):
             message = arabic_reshaper.reshape(message)
             message = get_display(message)
@@ -542,8 +588,51 @@ class DubbingApp:
         self.master.update()
 
     def handle_error(self, message):
+        """Handle and display error messages."""
         self.update_status(f"Error: {message}")
         messagebox.showerror("Error", message)
+
+    def toggle_voice_clone(self):
+        """Enable/disable voice cloning related widgets and load/unload model"""
+        if self.use_voice_clone.get():
+            self.speaker_btn.configure(state="normal")
+            self.load_tts_model()
+        else:
+            self.speaker_btn.configure(state="disabled")
+            if self.tts_model is not None:
+                del self.tts_model
+                self.tts_model = None
+
+    def load_tts_model(self):
+        """Load the TTS model for voice cloning"""
+        try:
+            self.update_status("Loading TTS model...")
+            from TTS.api import TTS
+            
+            # Get path to best model for voice cloning
+            model_name = TTS.list_models()[0]  # Get first available model
+            self.tts_model = TTS(model_name)
+            
+            self.update_status("TTS model loaded successfully")
+        except Exception as e:
+            self.handle_error(f"Error loading TTS model: {str(e)}")
+            self.use_voice_clone.set(False)
+            self.speaker_btn.configure(state="disabled")
+
+    def browse_speaker_voice(self):
+        """Browse for speaker voice WAV file"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("WAV files", "*.wav")]
+        )
+        if file_path:
+            self.speaker_wav_path.set(file_path)
+            self.speaker_label.configure(text=os.path.basename(file_path))
+
+    def cleanup(self):
+        """Clean up resources before closing"""
+        if self.tts_model is not None:
+            del self.tts_model
+        self.master.destroy()
 
 def main():
     root = tk.Tk()

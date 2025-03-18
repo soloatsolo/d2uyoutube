@@ -10,3 +10,5 @@ srt
 requests
 gTTS
 langdetect
+soundfile
+sounddevice
