@@ -1,0 +1,12 @@
+yt-dlp
+pydub
+moviepy
+deep-translator
+Pillow
+numpy
+arabic-reshaper
+python-bidi
+srt
+requests
+gTTS
+langdetect
